@@ -2,6 +2,7 @@ import math
 import os
 import socket
 import struct
+import traceback
 
 from kivy.app import App
 from kivy.clock import Clock
@@ -32,7 +33,7 @@ def register_korean_font():
     ]
     for path in candidates:
         try:
-            if os.path.exists(path):
+            if path and os.path.exists(path):
                 LabelBase.register(name="AppFont", fn_regular=path)
                 return "AppFont"
         except Exception:
@@ -55,14 +56,17 @@ def make_button(text="", **kwargs):
 
 def bind_auto_height(label, min_height=24, pad_y=8, pad_x=8):
     def _update(instance, *args):
-        w = max(40, instance.width - pad_x)
-        instance.text_size = (w, None)
-        th = instance.texture_size[1]
-        if th > 0:
-            instance.height = max(min_height, th + pad_y)
+        try:
+            w = max(40, float(instance.width) - pad_x)
+            instance.text_size = (w, None)
+            th = float(instance.texture_size[1])
+            if th > 0:
+                instance.height = max(min_height, th + pad_y)
+        except Exception:
+            pass
 
     label.bind(width=_update, texture_size=_update)
-    Clock.schedule_once(lambda dt: _update(label), 0)
+    Clock.schedule_once(lambda dt: _update(label), 0.05)
 
 
 def freq_to_band_and_width(freq_mhz, channel_width_enum=None):
@@ -152,28 +156,30 @@ class CyberApRadarWidget(Widget):
             )
             self._labels.append(lbl)
             self.add_widget(lbl)
+        self.update_radar(False, "측정 불가", [], "측정 불가")
         self.bind(pos=self._redraw, size=self._redraw)
 
     def update_radar(self, connected, connected_ssid, top_aps, link_speed_str):
         self._connected = bool(connected)
         self._ap_name = connected_ssid if (connected and connected_ssid) else "측정 불가"
         self._nodes = []
+        safe_aps = top_aps if isinstance(top_aps, list) else []
         for i in range(4):
             node_num = i + 1
-            if i < len(top_aps):
-                ap = top_aps[i]
+            if i < len(safe_aps):
+                ap = safe_aps[i]
                 rssi_val = ap.get("rssi")
                 bars_txt, bars_cnt, sig_color = rssi_to_signal_bars(rssi_val)
                 speed_txt = ap.get("link_speed_str") or link_speed_str or "측정 불가"
                 self._nodes.append(
                     {
                         "idx": node_num,
-                        "ssid": ap.get("ssid", "측정 불가"),
-                        "rssi_str": ap.get("rssi_str", "측정 불가"),
+                        "ssid": str(ap.get("ssid", "측정 불가")),
+                        "rssi_str": str(ap.get("rssi_str", "측정 불가")),
                         "strength_txt": bars_txt,
                         "bars": bars_cnt,
                         "color": sig_color,
-                        "speed": speed_txt,
+                        "speed": str(speed_txt),
                     }
                 )
             else:
@@ -245,127 +251,130 @@ class CyberApRadarWidget(Widget):
             Rectangle(pos=(bx, y), size=(4, bh))
 
     def _redraw(self, *args):
-        self.canvas.before.clear()
-        w, h = self.width, self.height
-        x0, y0 = self.x, self.y
-        if w <= 60 or h <= 60:
-            return
+        try:
+            self.canvas.before.clear()
+            w, h = float(self.width), float(self.height)
+            x0, y0 = float(self.x), float(self.y)
+            if w <= 60 or h <= 60 or len(self._nodes) < 4:
+                return
 
-        with self.canvas.before:
-            Color(0.04, 0.06, 0.11, 1)
-            Rectangle(pos=(x0, y0), size=(w, h))
+            with self.canvas.before:
+                Color(0.04, 0.06, 0.11, 1)
+                Rectangle(pos=(x0, y0), size=(w, h))
 
-            Color(0.09, 0.16, 0.26, 0.55)
-            step_x = max(28, w / 10.0)
-            step_y = max(24, h / 8.0)
-            gx = x0 + step_x
-            while gx < x0 + w:
-                Line(points=[gx, y0, gx, y0 + h], width=0.8)
-                gx += step_x
-            gy = y0 + step_y
-            while gy < y0 + h:
-                Line(points=[x0, gy, x0 + w, gy], width=0.8)
-                gy += step_y
+                Color(0.09, 0.16, 0.26, 0.55)
+                step_x = max(28.0, w / 10.0)
+                step_y = max(24.0, h / 8.0)
+                gx = x0 + step_x
+                while gx < x0 + w:
+                    Line(points=[gx, y0, gx, y0 + h], width=0.8)
+                    gx += step_x
+                gy = y0 + step_y
+                while gy < y0 + h:
+                    Line(points=[x0, gy, x0 + w, gy], width=0.8)
+                    gy += step_y
 
-            Color(0.0, 0.82, 0.98, 0.75)
-            Line(rectangle=(x0 + 3, y0 + 3, w - 6, h - 6), width=1.2)
+                Color(0.0, 0.82, 0.98, 0.75)
+                Line(rectangle=(x0 + 3, y0 + 3, w - 6, h - 6), width=1.2)
 
-            ap_cx = x0 + w * 0.5
-            ap_cy = y0 + h - 38
-            self._draw_router_icon(ap_cx, ap_cy, active=self._connected)
-            self._place_label(
-                0,
-                ap_cx - 76,
-                ap_cy - 24,
-                152,
-                16,
-                f"AP: {self._ap_name[:14]}",
-                color=(0.35, 0.95, 1.0, 1),
-            )
-
-            ph_w = min(144, max(104, w * 0.35))
-            ph_h = max(78, h * 0.34)
-            ph_x = x0 + (w - ph_w) * 0.5
-            ph_y = y0 + (h - ph_h) * 0.40
-            Color(0.0, 1.0, 0.62, 0.85)
-            Line(rounded_rectangle=(ph_x, ph_y, ph_w, ph_h, 12), width=1.6)
-
-            node_w = min(98, max(78, w * 0.25))
-            node_h = 34
-            node_specs = [
-                (x0 + 10, y0 + h - 68, 225),
-                (x0 + w - node_w - 10, y0 + h - 68, 315),
-                (x0 + 10, y0 + 12, 135),
-                (x0 + w - node_w - 10, y0 + 12, 45),
-            ]
-            inner_pts = [
-                (ph_x + 22, ph_y + ph_h - 18),
-                (ph_x + ph_w - 22, ph_y + ph_h - 18),
-                (ph_x + 22, ph_y + 18),
-                (ph_x + ph_w - 22, ph_y + 18),
-            ]
-
-            lbl_cursor = 1
-            for i in range(4):
-                node = self._nodes[i]
-                nx, ny, wave_ang = node_specs[i]
-                ncx, ncy = nx + node_w * 0.5, ny + node_h * 0.5
-
-                Color(node["color"][0], node["color"][1], node["color"][2], 0.45)
-                Line(points=[ap_cx, ap_cy - 8, ncx, ncy], width=1.1)
-
-                Color(0.08, 0.12, 0.20, 0.95)
-                Rectangle(pos=(nx, ny), size=(node_w, node_h))
-                Color(*node["color"])
-                Line(rectangle=(nx, ny, node_w, node_h), width=1.2)
-
-                self._draw_signal_waves(ncx, ncy, node["bars"], node["color"], wave_ang)
-                self._draw_signal_bar_meter(nx + 6, ny + 4, node["bars"], node["color"])
-
+                ap_cx = x0 + w * 0.5
+                ap_cy = y0 + h - 38
+                self._draw_router_icon(ap_cx, ap_cy, active=self._connected)
                 self._place_label(
-                    lbl_cursor,
-                    nx + 3,
-                    ny + 13,
-                    node_w - 6,
-                    18,
-                    f"#{node['idx']} {node['ssid'][:9]}",
-                    color=(0.94, 0.98, 1.0, 1),
+                    0,
+                    ap_cx - 76,
+                    ap_cy - 24,
+                    152,
+                    16,
+                    f"AP: {self._ap_name[:14]}",
+                    color=(0.35, 0.95, 1.0, 1),
                 )
-                lbl_cursor += 1
 
-                ix, iy = inner_pts[i]
-                Color(*node["color"])
-                Line(circle=(ix, iy, 8), width=1.4)
-                self._place_label(
-                    lbl_cursor,
-                    ix - 7,
-                    iy - 7,
-                    14,
-                    14,
-                    str(node["idx"]),
-                    color=(0.96, 0.98, 1.0, 1),
-                )
-                lbl_cursor += 1
+                ph_w = min(144.0, max(104.0, w * 0.35))
+                ph_h = max(78.0, h * 0.34)
+                ph_x = x0 + (w - ph_w) * 0.5
+                ph_y = y0 + (h - ph_h) * 0.40
+                Color(0.0, 1.0, 0.62, 0.85)
+                Line(rectangle=(ph_x, ph_y, ph_w, ph_h), width=1.6)
 
-                if i % 2 == 0:
-                    tag_x = x0 + 6
-                    tag_align = "left"
-                else:
-                    tag_x = x0 + w - 100
-                    tag_align = "right"
-                tag_y = ph_y + ph_h * 0.52 if i < 2 else ph_y + 4
+                node_w = min(98.0, max(78.0, w * 0.25))
+                node_h = 34.0
+                node_specs = [
+                    (x0 + 10, y0 + h - 68, 225),
+                    (x0 + w - node_w - 10, y0 + h - 68, 315),
+                    (x0 + 10, y0 + 12, 135),
+                    (x0 + w - node_w - 10, y0 + 12, 45),
+                ]
+                inner_pts = [
+                    (ph_x + 22, ph_y + ph_h - 18),
+                    (ph_x + ph_w - 22, ph_y + ph_h - 18),
+                    (ph_x + 22, ph_y + 18),
+                    (ph_x + ph_w - 22, ph_y + 18),
+                ]
 
-                self._place_label(
-                    lbl_cursor,
-                    tag_x,
-                    tag_y,
-                    94,
-                    30,
-                    f"[{node['idx']}] {node['strength_txt']}\n{node['rssi_str']} | {node['speed']}",
-                    halign=tag_align,
-                    color=node["color"],
-                )
-                lbl_cursor += 1
+                lbl_cursor = 1
+                for i in range(4):
+                    node = self._nodes[i]
+                    nx, ny, wave_ang = node_specs[i]
+                    ncx, ncy = nx + node_w * 0.5, ny + node_h * 0.5
+
+                    Color(node["color"][0], node["color"][1], node["color"][2], 0.45)
+                    Line(points=[ap_cx, ap_cy - 8, ncx, ncy], width=1.1)
+
+                    Color(0.08, 0.12, 0.20, 0.95)
+                    Rectangle(pos=(nx, ny), size=(node_w, node_h))
+                    Color(*node["color"])
+                    Line(rectangle=(nx, ny, node_w, node_h), width=1.2)
+
+                    self._draw_signal_waves(ncx, ncy, node["bars"], node["color"], wave_ang)
+                    self._draw_signal_bar_meter(nx + 6, ny + 4, node["bars"], node["color"])
+
+                    self._place_label(
+                        lbl_cursor,
+                        nx + 3,
+                        ny + 13,
+                        node_w - 6,
+                        18,
+                        f"#{node['idx']} {node['ssid'][:9]}",
+                        color=(0.94, 0.98, 1.0, 1),
+                    )
+                    lbl_cursor += 1
+
+                    ix, iy = inner_pts[i]
+                    Color(*node["color"])
+                    Line(circle=(ix, iy, 8), width=1.4)
+                    self._place_label(
+                        lbl_cursor,
+                        ix - 7,
+                        iy - 7,
+                        14,
+                        14,
+                        str(node["idx"]),
+                        color=(0.96, 0.98, 1.0, 1),
+                    )
+                    lbl_cursor += 1
+
+                    if i % 2 == 0:
+                        tag_x = x0 + 6
+                        tag_align = "left"
+                    else:
+                        tag_x = x0 + w - 100
+                        tag_align = "right"
+                    tag_y = ph_y + ph_h * 0.52 if i < 2 else ph_y + 4
+
+                    self._place_label(
+                        lbl_cursor,
+                        tag_x,
+                        tag_y,
+                        94,
+                        30,
+                        f"[{node['idx']}] {node['strength_txt']}\n{node['rssi_str']} | {node['speed']}",
+                        halign=tag_align,
+                        color=node["color"],
+                    )
+                    lbl_cursor += 1
+        except Exception:
+            pass
 
 
 class WifiTrackerScreen(BoxLayout):
@@ -473,16 +482,19 @@ class WifiTrackerScreen(BoxLayout):
         self.add_widget(scroll)
 
         if platform == "android":
-            Clock.schedule_once(lambda dt: self.init_android_permissions(), 0.4)
+            Clock.schedule_once(lambda dt: self.init_android_permissions(), 0.8)
         else:
             self._restricted_mode = True
             self.status_label.text = "상태: 스캔 대기중 (제한 모드)"
 
-        self.start_loop()
+        Clock.schedule_once(lambda dt: self.start_loop(), 1.0)
 
     def _sync_bg(self, *args):
-        self._bg.pos = self.pos
-        self._bg.size = self.size
+        try:
+            self._bg.pos = self.pos
+            self._bg.size = self.size
+        except Exception:
+            pass
 
     def init_android_permissions(self):
         try:
@@ -499,6 +511,7 @@ class WifiTrackerScreen(BoxLayout):
             )
             if has_loc:
                 self._restricted_mode = False
+                self.refresh_once()
             else:
                 request_permissions(perms, self._on_permission_result)
         except Exception:
@@ -506,36 +519,49 @@ class WifiTrackerScreen(BoxLayout):
             self.status_label.text = "상태: 스캔 대기중 (제한 모드)"
 
     def _on_permission_result(self, permissions, grant_results):
-        granted = any(grant_results) if grant_results else False
-        self._restricted_mode = not granted
-        if self._restricted_mode:
-            self.status_label.text = "상태: 스캔 대기중 (권한 거부 - 제한 모드)"
-        else:
-            self.status_label.text = "상태: 스캔 대기중"
-        self.refresh_once()
+        try:
+            granted = any(grant_results) if grant_results else False
+            self._restricted_mode = not granted
+            if self._restricted_mode:
+                self.status_label.text = "상태: 스캔 대기중 (권한 거부 - 제한 모드)"
+            else:
+                self.status_label.text = "상태: 스캔 대기중"
+            self.refresh_once()
+        except Exception:
+            pass
 
     def toggle_scanning(self, instance):
-        if self._timer_event is None:
-            self._screen_active = True
-            self.start_loop()
-            self.toggle_btn.text = "일시정지"
-            self.refresh_once()
-        else:
-            self.stop_loop()
-            self.toggle_btn.text = "5초 갱신 시작"
-            self.status_label.text = "상태: 스캔 대기중"
+        try:
+            if self._timer_event is None:
+                self._screen_active = True
+                self.start_loop()
+                self.toggle_btn.text = "일시정지"
+                self.refresh_once()
+            else:
+                self.stop_loop()
+                self.toggle_btn.text = "5초 갱신 시작"
+                self.status_label.text = "상태: 스캔 대기중"
+        except Exception:
+            pass
 
     def start_loop(self):
-        if not self._screen_active:
-            return
-        if self._timer_event is None:
-            self._timer_event = Clock.schedule_interval(lambda dt: self.refresh_once(), self.SCAN_INTERVAL_SEC)
-            self.toggle_btn.text = "일시정지"
+        try:
+            if not self._screen_active:
+                return
+            if self._timer_event is None:
+                self._timer_event = Clock.schedule_interval(lambda dt: self.refresh_once(), self.SCAN_INTERVAL_SEC)
+                self.toggle_btn.text = "일시정지"
+                Clock.schedule_once(lambda dt: self.refresh_once(), 0.2)
+        except Exception:
+            pass
 
     def stop_loop(self):
-        if self._timer_event is not None:
-            self._timer_event.cancel()
-            self._timer_event = None
+        try:
+            if self._timer_event is not None:
+                self._timer_event.cancel()
+                self._timer_event = None
+        except Exception:
+            pass
 
     def on_screen_off(self):
         self._screen_active = False
@@ -545,7 +571,6 @@ class WifiTrackerScreen(BoxLayout):
     def on_screen_on(self):
         self._screen_active = True
         self.start_loop()
-        self.refresh_once()
 
     def _get_android_wifi_and_network_info(self):
         from jnius import autoclass
@@ -553,7 +578,10 @@ class WifiTrackerScreen(BoxLayout):
         PythonActivity = autoclass("org.kivy.android.PythonActivity")
         Context = autoclass("android.content.Context")
 
-        activity = PythonActivity.mActivity
+        activity = getattr(PythonActivity, "mActivity", None)
+        if activity is None:
+            raise RuntimeError("Activity not ready")
+
         wifi_mgr = activity.getSystemService(Context.WIFI_SERVICE)
         conn_mgr = activity.getSystemService(Context.CONNECTIVITY_SERVICE)
 
@@ -571,7 +599,7 @@ class WifiTrackerScreen(BoxLayout):
         dns_str = "측정 불가"
 
         try:
-            wifi_info = wifi_mgr.getConnectionInfo()
+            wifi_info = wifi_mgr.getConnectionInfo() if wifi_mgr is not None else None
             if wifi_info is not None:
                 raw_ssid = wifi_info.getSSID()
                 bssid = wifi_info.getBSSID()
@@ -599,7 +627,7 @@ class WifiTrackerScreen(BoxLayout):
                     ch_width = None
 
                 if raw_ssid and raw_ssid != "<unknown ssid>":
-                    ssid = raw_ssid.strip('"')
+                    ssid = str(raw_ssid).strip('"')
                     connected = True
                 elif bssid and bssid != "02:00:00:00:00:00" and (rssi is not None and rssi > -120):
                     ssid = "(연결 AP)"
@@ -611,14 +639,14 @@ class WifiTrackerScreen(BoxLayout):
             pass
 
         try:
-            active_net = conn_mgr.getActiveNetwork()
+            active_net = conn_mgr.getActiveNetwork() if conn_mgr is not None else None
             if active_net is not None:
                 lp = conn_mgr.getLinkProperties(active_net)
                 if lp is not None:
                     link_addrs = lp.getLinkAddresses()
                     if link_addrs and link_addrs.size() > 0:
                         la = link_addrs.get(0)
-                        addr_str = la.getAddress().getHostAddress()
+                        addr_str = str(la.getAddress().getHostAddress())
                         prefix_len = la.getPrefixLength()
                         if addr_str and ":" not in addr_str:
                             ipv4 = addr_str
@@ -633,7 +661,7 @@ class WifiTrackerScreen(BoxLayout):
                             if rt.isDefaultRoute():
                                 gw_addr = rt.getGateway()
                                 if gw_addr is not None:
-                                    gw_host = gw_addr.getHostAddress()
+                                    gw_host = str(gw_addr.getHostAddress())
                                     if gw_host and ":" not in gw_host:
                                         gateway = gw_host
                                         break
@@ -641,7 +669,7 @@ class WifiTrackerScreen(BoxLayout):
                     if dns_list and dns_list.size() > 0:
                         dns_items = []
                         for i in range(min(2, dns_list.size())):
-                            dh = dns_list.get(i).getHostAddress()
+                            dh = str(dns_list.get(i).getHostAddress())
                             if dh and ":" not in dh:
                                 dns_items.append(dh)
                         if dns_items:
@@ -660,7 +688,7 @@ class WifiTrackerScreen(BoxLayout):
             self._cached_nat_ip = "측정 불가"
 
         ap_items = []
-        if not self._restricted_mode:
+        if not self._restricted_mode and wifi_mgr is not None:
             try:
                 try:
                     wifi_mgr.startScan()
@@ -670,7 +698,7 @@ class WifiTrackerScreen(BoxLayout):
                 if results is not None:
                     for i in range(results.size()):
                         item = results.get(i)
-                        ap_ssid = item.SSID if item.SSID else "(숨김 SSID)"
+                        ap_ssid = str(item.SSID) if item.SSID else "(숨김 SSID)"
                         ap_level = item.level
                         ap_freq = item.frequency
                         ap_width_enum = None
@@ -810,6 +838,7 @@ class WifiTrackerScreen(BoxLayout):
                 self.ap_list_label.text = "\n".join(lines)
 
         except Exception:
+            traceback.print_exc()
             self.status_label.text = "상태: 스캔 대기중"
             self.ap_list_label.text = "측정 불가"
 

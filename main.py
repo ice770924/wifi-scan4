@@ -287,4 +287,548 @@ class CyberApRadarWidget(Widget):
             ph_h = max(78, h * 0.34)
             ph_x = x0 + (w - ph_w) * 0.5
             ph_y = y0 + (h - ph_h) * 0.40
-            Color(0
+            Color(0.0, 1.0, 0.62, 0.85)
+            Line(rounded_rectangle=(ph_x, ph_y, ph_w, ph_h, 12), width=1.6)
+
+            node_w = min(98, max(78, w * 0.25))
+            node_h = 34
+            node_specs = [
+                (x0 + 10, y0 + h - 68, 225),
+                (x0 + w - node_w - 10, y0 + h - 68, 315),
+                (x0 + 10, y0 + 12, 135),
+                (x0 + w - node_w - 10, y0 + 12, 45),
+            ]
+            inner_pts = [
+                (ph_x + 22, ph_y + ph_h - 18),
+                (ph_x + ph_w - 22, ph_y + ph_h - 18),
+                (ph_x + 22, ph_y + 18),
+                (ph_x + ph_w - 22, ph_y + 18),
+            ]
+
+            lbl_cursor = 1
+            for i in range(4):
+                node = self._nodes[i]
+                nx, ny, wave_ang = node_specs[i]
+                ncx, ncy = nx + node_w * 0.5, ny + node_h * 0.5
+
+                Color(node["color"][0], node["color"][1], node["color"][2], 0.45)
+                Line(points=[ap_cx, ap_cy - 8, ncx, ncy], width=1.1)
+
+                Color(0.08, 0.12, 0.20, 0.95)
+                Rectangle(pos=(nx, ny), size=(node_w, node_h))
+                Color(*node["color"])
+                Line(rectangle=(nx, ny, node_w, node_h), width=1.2)
+
+                self._draw_signal_waves(ncx, ncy, node["bars"], node["color"], wave_ang)
+                self._draw_signal_bar_meter(nx + 6, ny + 4, node["bars"], node["color"])
+
+                self._place_label(
+                    lbl_cursor,
+                    nx + 3,
+                    ny + 13,
+                    node_w - 6,
+                    18,
+                    f"#{node['idx']} {node['ssid'][:9]}",
+                    color=(0.94, 0.98, 1.0, 1),
+                )
+                lbl_cursor += 1
+
+                ix, iy = inner_pts[i]
+                Color(*node["color"])
+                Line(circle=(ix, iy, 8), width=1.4)
+                self._place_label(
+                    lbl_cursor,
+                    ix - 7,
+                    iy - 7,
+                    14,
+                    14,
+                    str(node["idx"]),
+                    color=(0.96, 0.98, 1.0, 1),
+                )
+                lbl_cursor += 1
+
+                if i % 2 == 0:
+                    tag_x = x0 + 6
+                    tag_align = "left"
+                else:
+                    tag_x = x0 + w - 100
+                    tag_align = "right"
+                tag_y = ph_y + ph_h * 0.52 if i < 2 else ph_y + 4
+
+                self._place_label(
+                    lbl_cursor,
+                    tag_x,
+                    tag_y,
+                    94,
+                    30,
+                    f"[{node['idx']}] {node['strength_txt']}\n{node['rssi_str']} | {node['speed']}",
+                    halign=tag_align,
+                    color=node["color"],
+                )
+                lbl_cursor += 1
+
+
+class WifiTrackerScreen(BoxLayout):
+    SCAN_INTERVAL_SEC = 5.0
+
+    def __init__(self, **kwargs):
+        super().__init__(orientation="vertical", padding=[10, 8, 10, 8], spacing=6, **kwargs)
+
+        with self.canvas.before:
+            Color(0.03, 0.05, 0.09, 1)
+            self._bg = Rectangle(pos=self.pos, size=self.size)
+        self.bind(pos=self._sync_bg, size=self._sync_bg)
+
+        self._timer_event = None
+        self._screen_active = True
+        self._restricted_mode = False
+        self._last_connected_state = None
+        self._cached_nat_ip = "측정 불가"
+        self._cached_nat_bssid = None
+
+        self._step_count = 0
+        self._pos_east_m = 0.0
+        self._pos_north_m = 0.0
+        self._heading_deg = 0.0
+
+        top_bar = BoxLayout(size_hint_y=None, height=38, spacing=8)
+        self.status_label = make_label(
+            text="상태: 스캔 대기중",
+            size_hint_x=0.64,
+            halign="left",
+            valign="middle",
+            font_size="11.5sp",
+            color=(0.35, 0.95, 1.0, 1),
+        )
+        self.status_label.bind(size=lambda inst, val: setattr(inst, "text_size", (max(40, val[0] - 4), None)))
+
+        self.toggle_btn = make_button(
+            text="일시정지",
+            size_hint_x=0.36,
+            font_size="11.5sp",
+            background_color=(0.08, 0.45, 0.62, 1),
+        )
+        self.toggle_btn.bind(on_press=self.toggle_scanning)
+
+        top_bar.add_widget(self.status_label)
+        top_bar.add_widget(self.toggle_btn)
+        self.add_widget(top_bar)
+
+        self.walk_label = make_label(
+            text="이동추정: 걸음 0 | 위치: 측정 불가 | 방향: 측정 불가 | 거리: 측정 불가",
+            size_hint_y=None,
+            height=26,
+            font_size="10.5sp",
+            halign="left",
+            valign="middle",
+            color=(0.82, 0.92, 1.0, 1),
+        )
+        bind_auto_height(self.walk_label, min_height=26, pad_y=6, pad_x=4)
+        self.add_widget(self.walk_label)
+
+        self.radar_widget = CyberApRadarWidget()
+        self.add_widget(self.radar_widget)
+
+        self.conn_detail_label = make_label(
+            text=(
+                "NAT IP: 측정 불가\n"
+                "IPv4: 측정 불가 | 서브넷: 측정 불가 | 게이트웨이: 측정 불가 | DNS: 측정 불가\n"
+                "TX 속도: 측정 불가  /  RX 속도: 측정 불가\n"
+                "대역/채널폭: 측정 불가"
+            ),
+            size_hint_y=None,
+            height=96,
+            font_size="10.5sp",
+            halign="left",
+            valign="top",
+            color=(0.86, 0.95, 1.0, 1),
+        )
+        bind_auto_height(self.conn_detail_label, min_height=92, pad_y=10, pad_x=4)
+        self.add_widget(self.conn_detail_label)
+
+        self.list_header = make_label(
+            text="주변 AP 스캔 목록 (상위 10개 - 스캔 대기중)",
+            size_hint_y=None,
+            height=28,
+            font_size="11sp",
+            halign="left",
+            valign="middle",
+            color=(0.0, 1.0, 0.62, 1),
+        )
+        bind_auto_height(self.list_header, min_height=28, pad_y=8, pad_x=4)
+        self.add_widget(self.list_header)
+
+        self.ap_list_label = make_label(
+            text="스캔 대기중",
+            size_hint_y=None,
+            font_size="10.5sp",
+            halign="left",
+            valign="top",
+            color=(0.88, 0.93, 0.98, 1),
+        )
+        bind_auto_height(self.ap_list_label, min_height=80, pad_y=12, pad_x=4)
+
+        scroll = ScrollView()
+        scroll.add_widget(self.ap_list_label)
+        self.add_widget(scroll)
+
+        if platform == "android":
+            Clock.schedule_once(lambda dt: self.init_android_permissions(), 0.4)
+        else:
+            self._restricted_mode = True
+            self.status_label.text = "상태: 스캔 대기중 (제한 모드)"
+
+        self.start_loop()
+
+    def _sync_bg(self, *args):
+        self._bg.pos = self.pos
+        self._bg.size = self.size
+
+    def init_android_permissions(self):
+        try:
+            from android.permissions import Permission, check_permission, request_permissions
+
+            perms = [
+                Permission.ACCESS_FINE_LOCATION,
+                Permission.ACCESS_COARSE_LOCATION,
+                Permission.ACCESS_WIFI_STATE,
+                Permission.CHANGE_WIFI_STATE,
+            ]
+            has_loc = check_permission(Permission.ACCESS_FINE_LOCATION) or check_permission(
+                Permission.ACCESS_COARSE_LOCATION
+            )
+            if has_loc:
+                self._restricted_mode = False
+            else:
+                request_permissions(perms, self._on_permission_result)
+        except Exception:
+            self._restricted_mode = True
+            self.status_label.text = "상태: 스캔 대기중 (제한 모드)"
+
+    def _on_permission_result(self, permissions, grant_results):
+        granted = any(grant_results) if grant_results else False
+        self._restricted_mode = not granted
+        if self._restricted_mode:
+            self.status_label.text = "상태: 스캔 대기중 (권한 거부 - 제한 모드)"
+        else:
+            self.status_label.text = "상태: 스캔 대기중"
+        self.refresh_once()
+
+    def toggle_scanning(self, instance):
+        if self._timer_event is None:
+            self._screen_active = True
+            self.start_loop()
+            self.toggle_btn.text = "일시정지"
+            self.refresh_once()
+        else:
+            self.stop_loop()
+            self.toggle_btn.text = "5초 갱신 시작"
+            self.status_label.text = "상태: 스캔 대기중"
+
+    def start_loop(self):
+        if not self._screen_active:
+            return
+        if self._timer_event is None:
+            self._timer_event = Clock.schedule_interval(lambda dt: self.refresh_once(), self.SCAN_INTERVAL_SEC)
+            self.toggle_btn.text = "일시정지"
+
+    def stop_loop(self):
+        if self._timer_event is not None:
+            self._timer_event.cancel()
+            self._timer_event = None
+
+    def on_screen_off(self):
+        self._screen_active = False
+        self.stop_loop()
+        self.status_label.text = "상태: 스캔 대기중"
+
+    def on_screen_on(self):
+        self._screen_active = True
+        self.start_loop()
+        self.refresh_once()
+
+    def _get_android_wifi_and_network_info(self):
+        from jnius import autoclass
+
+        PythonActivity = autoclass("org.kivy.android.PythonActivity")
+        Context = autoclass("android.content.Context")
+
+        activity = PythonActivity.mActivity
+        wifi_mgr = activity.getSystemService(Context.WIFI_SERVICE)
+        conn_mgr = activity.getSystemService(Context.CONNECTIVITY_SERVICE)
+
+        connected = False
+        ssid = "측정 불가"
+        bssid = None
+        rssi = None
+        freq = None
+        ch_width = None
+        tx_mbps = "측정 불가"
+        rx_mbps = "측정 불가"
+        ipv4 = "측정 불가"
+        subnet = "측정 불가"
+        gateway = "측정 불가"
+        dns_str = "측정 불가"
+
+        try:
+            wifi_info = wifi_mgr.getConnectionInfo()
+            if wifi_info is not None:
+                raw_ssid = wifi_info.getSSID()
+                bssid = wifi_info.getBSSID()
+                rssi = wifi_info.getRssi()
+                freq = wifi_info.getFrequency()
+                link_speed = wifi_info.getLinkSpeed()
+                if link_speed and link_speed > 0:
+                    tx_mbps = f"{link_speed} Mbps"
+                    rx_mbps = f"{link_speed} Mbps"
+                try:
+                    tx_link = wifi_info.getTxLinkSpeedMbps()
+                    if tx_link and tx_link > 0:
+                        tx_mbps = f"{tx_link} Mbps"
+                except Exception:
+                    pass
+                try:
+                    rx_link = wifi_info.getRxLinkSpeedMbps()
+                    if rx_link and rx_link > 0:
+                        rx_mbps = f"{rx_link} Mbps"
+                except Exception:
+                    pass
+                try:
+                    ch_width = wifi_info.getChannelWidth()
+                except Exception:
+                    ch_width = None
+
+                if raw_ssid and raw_ssid != "<unknown ssid>":
+                    ssid = raw_ssid.strip('"')
+                    connected = True
+                elif bssid and bssid != "02:00:00:00:00:00" and (rssi is not None and rssi > -120):
+                    ssid = "(연결 AP)"
+                    connected = True
+
+                if ipv4 == "측정 불가":
+                    ipv4 = int_ip_to_str(wifi_info.getIpAddress())
+        except Exception:
+            pass
+
+        try:
+            active_net = conn_mgr.getActiveNetwork()
+            if active_net is not None:
+                lp = conn_mgr.getLinkProperties(active_net)
+                if lp is not None:
+                    link_addrs = lp.getLinkAddresses()
+                    if link_addrs and link_addrs.size() > 0:
+                        la = link_addrs.get(0)
+                        addr_str = la.getAddress().getHostAddress()
+                        prefix_len = la.getPrefixLength()
+                        if addr_str and ":" not in addr_str:
+                            ipv4 = addr_str
+                            connected = True
+                            if prefix_len and 0 <= prefix_len <= 32:
+                                mask_int = (0xFFFFFFFF << (32 - prefix_len)) & 0xFFFFFFFF
+                                subnet = socket.inet_ntoa(struct.pack("!I", mask_int))
+                    routes = lp.getRoutes()
+                    if routes:
+                        for i in range(routes.size()):
+                            rt = routes.get(i)
+                            if rt.isDefaultRoute():
+                                gw_addr = rt.getGateway()
+                                if gw_addr is not None:
+                                    gw_host = gw_addr.getHostAddress()
+                                    if gw_host and ":" not in gw_host:
+                                        gateway = gw_host
+                                        break
+                    dns_list = lp.getDnsServers()
+                    if dns_list and dns_list.size() > 0:
+                        dns_items = []
+                        for i in range(min(2, dns_list.size())):
+                            dh = dns_list.get(i).getHostAddress()
+                            if dh and ":" not in dh:
+                                dns_items.append(dh)
+                        if dns_items:
+                            dns_str = ", ".join(dns_items)
+        except Exception:
+            pass
+
+        if connected:
+            if bssid and bssid != self._cached_nat_bssid:
+                self._cached_nat_bssid = bssid
+                self._cached_nat_ip = self._fetch_nat_ip_once()
+            elif self._cached_nat_ip == "측정 불가":
+                self._cached_nat_ip = self._fetch_nat_ip_once()
+        else:
+            self._cached_nat_bssid = None
+            self._cached_nat_ip = "측정 불가"
+
+        ap_items = []
+        if not self._restricted_mode:
+            try:
+                try:
+                    wifi_mgr.startScan()
+                except Exception:
+                    pass
+                results = wifi_mgr.getScanResults()
+                if results is not None:
+                    for i in range(results.size()):
+                        item = results.get(i)
+                        ap_ssid = item.SSID if item.SSID else "(숨김 SSID)"
+                        ap_level = item.level
+                        ap_freq = item.frequency
+                        ap_width_enum = None
+                        try:
+                            ap_width_enum = item.channelWidth
+                        except Exception:
+                            pass
+                        band, width_str = freq_to_band_and_width(ap_freq, ap_width_enum)
+                        dist_str = estimate_approx_distance_meters(ap_level, ap_freq)
+                        ap_items.append(
+                            {
+                                "ssid": ap_ssid,
+                                "rssi": ap_level if ap_level is not None else -999,
+                                "rssi_str": f"{ap_level} dBm" if ap_level is not None else "측정 불가",
+                                "band": band,
+                                "width": width_str,
+                                "dist_str": dist_str,
+                                "link_speed_str": tx_mbps if connected else "측정 불가",
+                            }
+                        )
+            except Exception:
+                pass
+
+        ap_items.sort(key=lambda x: x["rssi"], reverse=True)
+        top10 = ap_items[:10]
+
+        band, width_str = freq_to_band_and_width(freq, ch_width)
+        dist_connected = estimate_approx_distance_meters(rssi, freq) if connected else "측정 불가"
+        dir_str = azimuth_to_cardinal(self._heading_deg) if connected else "측정 불가"
+
+        return {
+            "connected": connected,
+            "ssid": ssid,
+            "band_width": f"{band} / {width_str}" if connected else "측정 불가",
+            "tx_mbps": tx_mbps if connected else "측정 불가",
+            "rx_mbps": rx_mbps if connected else "측정 불가",
+            "nat_ip": self._cached_nat_ip if connected else "측정 불가",
+            "ipv4": ipv4 if connected else "측정 불가",
+            "subnet": subnet if connected else "측정 불가",
+            "gateway": gateway if connected else "측정 불가",
+            "dns": dns_str if connected else "측정 불가",
+            "direction": dir_str,
+            "distance": dist_connected,
+            "top10": top10,
+        }
+
+    def _fetch_nat_ip_once(self):
+        try:
+            import urllib.request
+
+            req = urllib.request.Request("https://api.ipify.org", headers={"User-Agent": "WiFiTrackerS10/1.0"})
+            with urllib.request.urlopen(req, timeout=2.0) as resp:
+                ip_text = resp.read().decode("utf-8").strip()
+                if ip_text:
+                    return ip_text
+        except Exception:
+            pass
+        return "측정 불가"
+
+    def _transition_connection_status(self, connected):
+        if self._last_connected_state is None:
+            self._last_connected_state = connected
+            self.status_label.text = "상태: 스캔 중 (연결됨)" if connected else "상태: 연결끊김 (스캔 대기중)"
+            return
+
+        if self._last_connected_state and not connected:
+            self._last_connected_state = False
+            self.status_label.text = "상태: 연결끊김"
+            Clock.schedule_once(lambda dt: self._set_reconnecting(), 0.7)
+        elif not self._last_connected_state and connected:
+            self._last_connected_state = True
+            self.status_label.text = "상태: 재연결중..."
+            Clock.schedule_once(lambda dt: setattr(self.status_label, "text", "상태: 스캔 중 (연결됨)"), 0.8)
+        else:
+            if connected:
+                mode_tag = " [제한 모드]" if self._restricted_mode else ""
+                self.status_label.text = f"상태: 스캔 중{mode_tag}"
+            else:
+                self.status_label.text = "상태: 연결끊김 / 재연결중"
+
+    def _set_reconnecting(self):
+        if not self._last_connected_state and self._screen_active:
+            self.status_label.text = "상태: 재연결중..."
+
+    def refresh_once(self):
+        if not self._screen_active:
+            self.status_label.text = "상태: 스캔 대기중"
+            return
+
+        if platform != "android":
+            self._transition_connection_status(False)
+            self.radar_widget.update_radar(False, "측정 불가", [], "측정 불가")
+            self.ap_list_label.text = "측정 불가"
+            return
+
+        try:
+            data = self._get_android_wifi_and_network_info()
+            self._transition_connection_status(data["connected"])
+
+            pos_text = (
+                f"동/서 {self._pos_east_m:+.1f}m, 남/북 {self._pos_north_m:+.1f}m"
+                if not self._restricted_mode and self._step_count > 0
+                else "측정 불가"
+            )
+            self.walk_label.text = (
+                f"이동추정: 걸음 {self._step_count} | 위치: {pos_text} | "
+                f"방향: {data['direction']} | 거리: {data['distance']}"
+            )
+
+            self.conn_detail_label.text = (
+                f"NAT IP: {data['nat_ip']}\n"
+                f"IPv4: {data['ipv4']} | 서브넷: {data['subnet']} | 게이트웨이: {data['gateway']} | DNS: {data['dns']}\n"
+                f"TX 속도: {data['tx_mbps']}  /  RX 속도: {data['rx_mbps']}\n"
+                f"대역/채널폭: {data['band_width']}"
+            )
+
+            self.radar_widget.update_radar(
+                data["connected"],
+                data["ssid"],
+                data["top10"],
+                data["tx_mbps"],
+            )
+
+            if self._restricted_mode:
+                self.list_header.text = "주변 AP 스캔 목록 (위치 권한 거부 - 제한 모드)"
+                self.ap_list_label.text = "위치 권한 미허용으로 주변 AP 상세 목록이 제한됩니다 (측정 불가)."
+            elif not data["top10"]:
+                self.list_header.text = "주변 AP 스캔 목록 (상위 10개)"
+                self.ap_list_label.text = "측정 불가"
+            else:
+                self.list_header.text = f"주변 AP 스캔 목록 (상위 {len(data['top10'])}개 - 5초 갱신)"
+                lines = []
+                for idx, ap in enumerate(data["top10"], start=1):
+                    lines.append(
+                        f"{idx}. {ap['ssid']} | {ap['rssi_str']} | {ap['band']} ({ap['width']}) | {ap['dist_str']}"
+                    )
+                self.ap_list_label.text = "\n".join(lines)
+
+        except Exception:
+            self.status_label.text = "상태: 스캔 대기중"
+            self.ap_list_label.text = "측정 불가"
+
+
+class WifiTrackerS10App(App):
+    def build(self):
+        self.title = "WiFi Tracker S10"
+        self.screen = WifiTrackerScreen()
+        return self.screen
+
+    def on_pause(self):
+        if hasattr(self, "screen"):
+            self.screen.on_screen_off()
+        return True
+
+    def on_resume(self):
+        if hasattr(self, "screen"):
+            self.screen.on_screen_on()
+
+
+if __name__ == "__main__":
+    WifiTrackerS10App().run()

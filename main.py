@@ -138,10 +138,10 @@ def int_ip_to_str(ip_int):
 
 
 class CyberApRadarWidget(Widget):
-    """1~4번 노드 일대일 매핑 및 겹침 방지 레이아웃이 적용된 사이버틱 AP 맵"""
+    """확장된 빨간 박스 영역 내 AP·4개 노드·분홍 화살표 방향 신호선·단말 프레임 시각화"""
 
     def __init__(self, **kwargs):
-        super().__init__(size_hint_y=None, height=256, **kwargs)
+        super().__init__(size_hint_y=None, height=340, **kwargs)
         self._ap_name = "측정 불가"
         self._connected = False
         self._nodes = []
@@ -210,7 +210,7 @@ class CyberApRadarWidget(Widget):
 
     def _draw_router_icon(self, cx, cy, active=False):
         base_color = (0.0, 0.90, 1.0, 1) if active else (0.35, 0.45, 0.58, 0.9)
-        body_w, body_h = 56, 18
+        body_w, body_h = 58, 18
         bx, by = cx - body_w * 0.5, cy - body_h * 0.5
 
         Color(0.06, 0.11, 0.19, 1)
@@ -231,14 +231,49 @@ class CyberApRadarWidget(Widget):
                 Color(0.35, 0.42, 0.50, 0.8)
             Ellipse(pos=(lx, by + 6), size=(5, 5))
 
-    def _draw_signal_waves(self, cx, cy, bars, color, outward_angle_deg):
-        if bars <= 0:
+    def _draw_directed_signal_line(self, sx, sy, tx, ty, bars, color):
+        """분홍 화살표 방향을 따라 AP 기준점에서 각 노드로 향하는 신호선 및 화살촉 생성"""
+        dx = tx - sx
+        dy = ty - sy
+        dist = math.hypot(dx, dy)
+        if dist < 4:
             return
-        Color(color[0], color[1], color[2], 0.85)
-        span = 34
-        for b in range(bars):
-            r = 14 + b * 6
-            Line(circle=(cx, cy, r, outward_angle_deg - span, outward_angle_deg + span), width=1.4)
+        ux = dx / dist
+        uy = dy / dist
+        px = -uy
+        py = ux
+
+        # 시작·끝 여백을 두어 노드 박스와 겹치지 않게 선 연결
+        start_x = sx + ux * 16
+        start_y = sy + uy * 16
+        end_x = tx - ux * 22
+        end_y = ty - uy * 22
+
+        # 메인 신호 선(분홍 포인트 라인 + 신호 강도 웨이브 마커)
+        Color(1.0, 0.35, 0.78, 0.9)
+        Line(points=[start_x, start_y, end_x, end_y], width=1.4)
+
+        # 신호 강도(1~4)에 따라 선 중간에 파동 tick 표시
+        active_ticks = max(1, bars)
+        for t_idx in range(active_ticks):
+            frac = 0.25 + 0.50 * (t_idx / max(1, active_ticks))
+            mx = start_x + (end_x - start_x) * frac
+            my = start_y + (end_y - start_y) * frac
+            tick_len = 4.5 + t_idx * 1.2
+            Color(*color)
+            Line(
+                points=[mx - px * tick_len, my - py * tick_len, mx + px * tick_len, my + py * tick_len],
+                width=1.2,
+            )
+
+        # 화살촉(분홍 화살표 방향)
+        head_len = 8.0
+        ang = math.atan2(dy, dx)
+        Color(1.0, 0.35, 0.78, 0.95)
+        for side in (-1, 1):
+            hx = end_x - head_len * math.cos(ang + side * 0.42)
+            hy = end_y - head_len * math.sin(ang + side * 0.42)
+            Line(points=[end_x, end_y, hx, hy], width=1.4)
 
     def _draw_signal_bar_meter(self, x, y, bars, color):
         for b in range(4):
@@ -274,65 +309,73 @@ class CyberApRadarWidget(Widget):
                     Line(points=[x0, gy, x0 + w, gy], width=0.8)
                     gy += step_y
 
-                Color(0.0, 0.82, 0.98, 0.75)
-                Line(rectangle=(x0 + 3, y0 + 3, w - 6, h - 6), width=1.2)
+                # 확장된 빨간 박스 프레임
+                Color(0.95, 0.20, 0.25, 0.9)
+                Line(rectangle=(x0 + 2, y0 + 2, w - 4, h - 4), width=1.5)
 
                 ap_cx = x0 + w * 0.5
-                ap_cy = y0 + h - 38
+                ap_cy = y0 + h - 42
                 self._draw_router_icon(ap_cx, ap_cy, active=self._connected)
                 self._place_label(
                     0,
-                    ap_cx - 76,
-                    ap_cy - 24,
-                    152,
+                    ap_cx - 80,
+                    ap_cy - 25,
+                    160,
                     16,
                     f"AP: {self._ap_name[:14]}",
                     color=(0.35, 0.95, 1.0, 1),
                 )
 
-                ph_w = min(144.0, max(104.0, w * 0.35))
-                ph_h = max(78.0, h * 0.34)
+                ph_w = min(156.0, max(112.0, w * 0.36))
+                ph_h = max(106.0, h * 0.34)
                 ph_x = x0 + (w - ph_w) * 0.5
-                ph_y = y0 + (h - ph_h) * 0.40
+                ph_y = y0 + (h - ph_h) * 0.44
                 Color(0.0, 1.0, 0.62, 0.85)
                 Line(rectangle=(ph_x, ph_y, ph_w, ph_h), width=1.6)
 
-                node_w = min(98.0, max(78.0, w * 0.25))
-                node_h = 34.0
-                node_specs = [
-                    (x0 + 10, y0 + h - 68, 225),
-                    (x0 + w - node_w - 10, y0 + h - 68, 315),
-                    (x0 + 10, y0 + 12, 135),
-                    (x0 + w - node_w - 10, y0 + 12, 45),
+                node_w = min(102.0, max(82.0, w * 0.26))
+                node_h = 36.0
+                node_positions = [
+                    (x0 + 10, y0 + h - 84),
+                    (x0 + w - node_w - 10, y0 + h - 84),
+                    (x0 + 10, y0 + 16),
+                    (x0 + w - node_w - 10, y0 + 16),
+                ]
+                # 분홍 화살표 방향 기준 출발점(상단 노드는 AP 하단, 하단 노드는 단말 하단 중앙)
+                signal_origins = [
+                    (ap_cx - 12, ap_cy - 10),
+                    (ap_cx + 12, ap_cy - 10),
+                    (ph_x + ph_w * 0.25, ph_y),
+                    (ph_x + ph_w * 0.75, ph_y),
                 ]
                 inner_pts = [
-                    (ph_x + 22, ph_y + ph_h - 18),
-                    (ph_x + ph_w - 22, ph_y + ph_h - 18),
-                    (ph_x + 22, ph_y + 18),
-                    (ph_x + ph_w - 22, ph_y + 18),
+                    (ph_x + 24, ph_y + ph_h - 20),
+                    (ph_x + ph_w - 24, ph_y + ph_h - 20),
+                    (ph_x + 24, ph_y + 20),
+                    (ph_x + ph_w - 24, ph_y + 20),
                 ]
 
                 lbl_cursor = 1
                 for i in range(4):
                     node = self._nodes[i]
-                    nx, ny, wave_ang = node_specs[i]
+                    nx, ny = node_positions[i]
                     ncx, ncy = nx + node_w * 0.5, ny + node_h * 0.5
+                    ox, oy = signal_origins[i]
 
-                    Color(node["color"][0], node["color"][1], node["color"][2], 0.45)
-                    Line(points=[ap_cx, ap_cy - 8, ncx, ncy], width=1.1)
+                    # 분홍 화살표 방향으로 신호선 생성
+                    self._draw_directed_signal_line(ox, oy, ncx, ncy, node["bars"], node["color"])
 
-                    Color(0.08, 0.12, 0.20, 0.95)
+                    Color(0.08, 0.12, 0.20, 0.96)
                     Rectangle(pos=(nx, ny), size=(node_w, node_h))
                     Color(*node["color"])
-                    Line(rectangle=(nx, ny, node_w, node_h), width=1.2)
+                    Line(rectangle=(nx, ny, node_w, node_h), width=1.3)
 
-                    self._draw_signal_waves(ncx, ncy, node["bars"], node["color"], wave_ang)
                     self._draw_signal_bar_meter(nx + 6, ny + 4, node["bars"], node["color"])
 
                     self._place_label(
                         lbl_cursor,
                         nx + 3,
-                        ny + 13,
+                        ny + 14,
                         node_w - 6,
                         18,
                         f"#{node['idx']} {node['ssid'][:9]}",
@@ -358,16 +401,16 @@ class CyberApRadarWidget(Widget):
                         tag_x = x0 + 6
                         tag_align = "left"
                     else:
-                        tag_x = x0 + w - 100
+                        tag_x = x0 + w - 102
                         tag_align = "right"
-                    tag_y = ph_y + ph_h * 0.52 if i < 2 else ph_y + 4
+                    tag_y = ph_y + ph_h * 0.54 if i < 2 else ph_y + 4
 
                     self._place_label(
                         lbl_cursor,
                         tag_x,
                         tag_y,
-                        94,
-                        30,
+                        96,
+                        32,
                         f"[{node['idx']}] {node['strength_txt']}\n{node['rssi_str']} | {node['speed']}",
                         halign=tag_align,
                         color=node["color"],
@@ -400,6 +443,7 @@ class WifiTrackerScreen(BoxLayout):
         self._pos_north_m = 0.0
         self._heading_deg = 0.0
 
+        # 1) 상태 및 5초 갱신 제어 바
         top_bar = BoxLayout(size_hint_y=None, height=38, spacing=8)
         self.status_label = make_label(
             text="상태: 스캔 대기중",
@@ -423,6 +467,7 @@ class WifiTrackerScreen(BoxLayout):
         top_bar.add_widget(self.toggle_btn)
         self.add_widget(top_bar)
 
+        # 2) 보행 추정 / 방향 / 거리
         self.walk_label = make_label(
             text="이동추정: 걸음 0 | 위치: 측정 불가 | 방향: 측정 불가 | 거리: 측정 불가",
             size_hint_y=None,
@@ -435,37 +480,62 @@ class WifiTrackerScreen(BoxLayout):
         bind_auto_height(self.walk_label, min_height=26, pad_y=6, pad_x=4)
         self.add_widget(self.walk_label)
 
+        # 3) 확장된 빨간 박스(AP 맵 + 분홍 화살표 방향 신호선)
         self.radar_widget = CyberApRadarWidget()
         self.add_widget(self.radar_widget)
+
+        # 4) 하단 초록 박스 영역(노란 박스 쪽으로 배치 및 항목별 일렬 정렬)
+        self.green_panel = BoxLayout(
+            orientation="vertical",
+            padding=[10, 8, 10, 8],
+            spacing=6,
+        )
+        with self.green_panel.canvas.before:
+            Color(0.05, 0.14, 0.10, 0.75)
+            self._green_bg = Rectangle(pos=self.green_panel.pos, size=self.green_panel.size)
+            Color(0.15, 0.85, 0.42, 0.9)
+            self._green_border = Line(
+                rectangle=(
+                    self.green_panel.x + 2,
+                    self.green_panel.y + 2,
+                    max(1, self.green_panel.width - 4),
+                    max(1, self.green_panel.height - 4),
+                ),
+                width=1.4,
+            )
+        self.green_panel.bind(pos=self._sync_green_panel, size=self._sync_green_panel)
 
         self.conn_detail_label = make_label(
             text=(
                 "NAT IP: 측정 불가\n"
-                "IPv4: 측정 불가 | 서브넷: 측정 불가 | 게이트웨이: 측정 불가 | DNS: 측정 불가\n"
+                "IPv4: 측정 불가\n"
+                "서브넷: 측정 불가\n"
+                "게이트웨이: 측정 불가\n"
+                "DNS: 측정 불가\n"
                 "TX 속도: 측정 불가  /  RX 속도: 측정 불가\n"
                 "대역/채널폭: 측정 불가"
             ),
             size_hint_y=None,
-            height=96,
+            height=130,
             font_size="10.5sp",
             halign="left",
             valign="top",
-            color=(0.86, 0.95, 1.0, 1),
+            color=(0.88, 0.98, 0.92, 1),
         )
-        bind_auto_height(self.conn_detail_label, min_height=92, pad_y=10, pad_x=4)
-        self.add_widget(self.conn_detail_label)
+        bind_auto_height(self.conn_detail_label, min_height=120, pad_y=8, pad_x=4)
+        self.green_panel.add_widget(self.conn_detail_label)
 
         self.list_header = make_label(
             text="주변 AP 스캔 목록 (상위 10개 - 스캔 대기중)",
             size_hint_y=None,
-            height=28,
+            height=26,
             font_size="11sp",
             halign="left",
             valign="middle",
             color=(0.0, 1.0, 0.62, 1),
         )
-        bind_auto_height(self.list_header, min_height=28, pad_y=8, pad_x=4)
-        self.add_widget(self.list_header)
+        bind_auto_height(self.list_header, min_height=26, pad_y=6, pad_x=4)
+        self.green_panel.add_widget(self.list_header)
 
         self.ap_list_label = make_label(
             text="스캔 대기중",
@@ -473,13 +543,15 @@ class WifiTrackerScreen(BoxLayout):
             font_size="10.5sp",
             halign="left",
             valign="top",
-            color=(0.88, 0.93, 0.98, 1),
+            color=(0.90, 0.97, 0.93, 1),
         )
-        bind_auto_height(self.ap_list_label, min_height=80, pad_y=12, pad_x=4)
+        bind_auto_height(self.ap_list_label, min_height=80, pad_y=10, pad_x=4)
 
         scroll = ScrollView()
         scroll.add_widget(self.ap_list_label)
-        self.add_widget(scroll)
+        self.green_panel.add_widget(scroll)
+
+        self.add_widget(self.green_panel)
 
         if platform == "android":
             Clock.schedule_once(lambda dt: self.init_android_permissions(), 0.8)
@@ -493,6 +565,19 @@ class WifiTrackerScreen(BoxLayout):
         try:
             self._bg.pos = self.pos
             self._bg.size = self.size
+        except Exception:
+            pass
+
+    def _sync_green_panel(self, *args):
+        try:
+            self._green_bg.pos = self.green_panel.pos
+            self._green_bg.size = self.green_panel.size
+            self._green_border.rectangle = (
+                self.green_panel.x + 2,
+                self.green_panel.y + 2,
+                max(1, self.green_panel.width - 4),
+                max(1, self.green_panel.height - 4),
+            )
         except Exception:
             pass
 
@@ -810,7 +895,10 @@ class WifiTrackerScreen(BoxLayout):
 
             self.conn_detail_label.text = (
                 f"NAT IP: {data['nat_ip']}\n"
-                f"IPv4: {data['ipv4']} | 서브넷: {data['subnet']} | 게이트웨이: {data['gateway']} | DNS: {data['dns']}\n"
+                f"IPv4: {data['ipv4']}\n"
+                f"서브넷: {data['subnet']}\n"
+                f"게이트웨이: {data['gateway']}\n"
+                f"DNS: {data['dns']}\n"
                 f"TX 속도: {data['tx_mbps']}  /  RX 속도: {data['rx_mbps']}\n"
                 f"대역/채널폭: {data['band_width']}"
             )

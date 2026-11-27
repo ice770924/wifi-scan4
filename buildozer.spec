@@ -4,7 +4,7 @@ package.name = wifitrackers10
 package.domain = org.personal.wifitracker
 source.dir = .
 source.include_exts = py,png,jpg,kv,atlas
-version = 0.1.0
+version = 0.2.0
 
 requirements = python3,kivy==2.3.0,pyjnius,requests,urllib3,certifi,charset-normalizer,idna
 p4a.branch = release-2024.01.21

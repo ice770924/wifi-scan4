@@ -142,7 +142,6 @@ class CyberApRadarWidget(Widget):
         self._connected = False
         self._nodes = []
         self._labels = []
-        # 1(AP) + 4(노드 SSID) + 4(단말 번호) + 4(강도/속도) = 13개 라벨
         for _ in range(13):
             lbl = make_label(
                 text="",
@@ -220,7 +219,10 @@ class CyberApRadarWidget(Widget):
 
         for k in range(3):
             lx = bx + 9 + k * 14
-            Color(0.0, 1.0, 0.62, 1) if active else Color(0.35, 0.42, 0.50, 0.8)
+            if active:
+                Color(0.0, 1.0, 0.62, 1)
+            else:
+                Color(0.35, 0.42, 0.50, 0.8)
             Ellipse(pos=(lx, by + 6), size=(5, 5))
 
     def _draw_signal_waves(self, cx, cy, bars, color, outward_angle_deg):
@@ -236,7 +238,10 @@ class CyberApRadarWidget(Widget):
         for b in range(4):
             bh = 5 + b * 3
             bx = x + b * 6
-            Color(*color) if b < bars else Color(0.20, 0.26, 0.35, 0.7)
+            if b < bars:
+                Color(*color)
+            else:
+                Color(0.20, 0.26, 0.35, 0.7)
             Rectangle(pos=(bx, y), size=(4, bh))
 
     def _redraw(self, *args):
@@ -282,156 +287,4 @@ class CyberApRadarWidget(Widget):
             ph_h = max(78, h * 0.34)
             ph_x = x0 + (w - ph_w) * 0.5
             ph_y = y0 + (h - ph_h) * 0.40
-            Color(0.0, 1.0, 0.62, 0.85)
-            Line(rounded_rectangle=(ph_x, ph_y, ph_w, ph_h, 12), width=1.6)
-
-            # 0: 좌상(#1), 1: 우상(#2), 2: 좌하(#3), 3: 우하(#4)
-            node_w = min(98, max(78, w * 0.25))
-            node_h = 34
-            node_specs = [
-                (x0 + 10, y0 + h - 68, 225),
-                (x0 + w - node_w - 10, y0 + h - 68, 315),
-                (x0 + 10, y0 + 12, 135),
-                (x0 + w - node_w - 10, y0 + 12, 45),
-            ]
-            inner_pts = [
-                (ph_x + 22, ph_y + ph_h - 18),
-                (ph_x + ph_w - 22, ph_y + ph_h - 18),
-                (ph_x + 22, ph_y + 18),
-                (ph_x + ph_w - 22, ph_y + 18),
-            ]
-
-            lbl_cursor = 1
-            for i in range(4):
-                node = self._nodes[i]
-                nx, ny, wave_ang = node_specs[i]
-                ncx, ncy = nx + node_w * 0.5, ny + node_h * 0.5
-
-                Color(node["color"][0], node["color"][1], node["color"][2], 0.45)
-                Line(points=[ap_cx, ap_cy - 8, ncx, ncy], width=1.1)
-
-                Color(0.08, 0.12, 0.20, 0.95)
-                Rectangle(pos=(nx, ny), size=(node_w, node_h))
-                Color(*node["color"])
-                Line(rectangle=(nx, ny, node_w, node_h), width=1.2)
-
-                self._draw_signal_waves(ncx, ncy, node["bars"], node["color"], wave_ang)
-                self._draw_signal_bar_meter(nx + 6, ny + 4, node["bars"], node["color"])
-
-                self._place_label(
-                    lbl_cursor,
-                    nx + 3,
-                    ny + 13,
-                    node_w - 6,
-                    18,
-                    f"#{node['idx']} {node['ssid'][:9]}",
-                    color=(0.94, 0.98, 1.0, 1),
-                )
-                lbl_cursor += 1
-
-                ix, iy = inner_pts[i]
-                Color(*node["color"])
-                Line(circle=(ix, iy, 8), width=1.4)
-                self._place_label(
-                    lbl_cursor,
-                    ix - 7,
-                    iy - 7,
-                    14,
-                    14,
-                    str(node["idx"]),
-                    color=(0.96, 0.98, 1.0, 1),
-                )
-                lbl_cursor += 1
-
-                if i % 2 == 0:
-                    tag_x = x0 + 6
-                    tag_align = "left"
-                else:
-                    tag_x = x0 + w - 100
-                    tag_align = "right"
-                tag_y = ph_y + ph_h * 0.52 if i < 2 else ph_y + 4
-
-                self._place_label(
-                    lbl_cursor,
-                    tag_x,
-                    tag_y,
-                    94,
-                    30,
-                    f"[{node['idx']}] {node['strength_txt']}\n{node['rssi_str']} | {node['speed']}",
-                    halign=tag_align,
-                    color=node["color"],
-                )
-                lbl_cursor += 1
-
-
-class WifiTrackerScreen(BoxLayout):
-    SCAN_INTERVAL_SEC = 5.0
-
-    def __init__(self, **kwargs):
-        super().__init__(orientation="vertical", padding=[10, 8, 10, 8], spacing=6, **kwargs)
-
-        with self.canvas.before:
-            Color(0.03, 0.05, 0.09, 1)
-            self._bg = Rectangle(pos=self.pos, size=self.size)
-        self.bind(pos=self._sync_bg, size=self._sync_bg)
-
-        self._timer_event = None
-        self._screen_active = True
-        self._restricted_mode = False
-        self._last_connected_state = None
-        self._cached_nat_ip = "측정 불가"
-        self._cached_nat_bssid = None
-
-        self._step_count = 0
-        self._pos_east_m = 0.0
-        self._pos_north_m = 0.0
-        self._heading_deg = 0.0
-
-        top_bar = BoxLayout(size_hint_y=None, height=38, spacing=8)
-        self.status_label = make_label(
-            text="상태: 스캔 대기중",
-            size_hint_x=0.64,
-            halign="left",
-            valign="middle",
-            font_size="11.5sp",
-            color=(0.35, 0.95, 1.0, 1),
-        )
-        self.status_label.bind(size=lambda inst, val: setattr(inst, "text_size", (max(40, val[0] - 4), None)))
-
-        self.toggle_btn = make_button(
-            text="일시정지",
-            size_hint_x=0.36,
-            font_size="11.5sp",
-            background_color=(0.08, 0.45, 0.62, 1),
-        )
-        self.toggle_btn.bind(on_press=self.toggle_scanning)
-
-        top_bar.add_widget(self.status_label)
-        top_bar.add_widget(self.toggle_btn)
-        self.add_widget(top_bar)
-
-        self.walk_label = make_label(
-            text="이동추정: 걸음 0 | 위치: 측정 불가 | 방향: 측정 불가 | 거리: 측정 불가",
-            size_hint_y=None,
-            height=26,
-            font_size="10.5sp",
-            halign="left",
-            valign="middle",
-            color=(0.82, 0.92, 1.0, 1),
-        )
-        bind_auto_height(self.walk_label, min_height=26, pad_y=6, pad_x=4)
-        self.add_widget(self.walk_label)
-
-        self.radar_widget = CyberApRadarWidget()
-        self.add_widget(self.radar_widget)
-
-        self.conn_detail_label = make_label(
-            text=(
-                "NAT IP: 측정 불가\n"
-                "IPv4: 측정 불가 | 서브넷: 측정 불가 | 게이트웨이: 측정 불가 | DNS: 측정 불가\n"
-                "TX 속도: 측정 불가  /  RX 속도: 측정 불가\n"
-                "대역/채널폭: 측정 불가"
-            ),
-            size_hint_y=None,
-            height=96,
-            font
+            Color(0

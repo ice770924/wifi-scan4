@@ -54,10 +54,10 @@ def make_button(text="", **kwargs):
     return Button(text=text, **kwargs)
 
 
-def bind_auto_height(label, min_height=24, pad_y=8, pad_x=8):
+def bind_auto_height(label, min_height=28, pad_y=10, pad_x=8):
     def _update(instance, *args):
         try:
-            w = max(40, float(instance.width) - pad_x)
+            w = max(60, float(instance.width) - pad_x)
             instance.text_size = (w, None)
             th = float(instance.texture_size[1])
             if th > 0:
@@ -138,10 +138,11 @@ def int_ip_to_str(ip_int):
 
 
 class CyberApRadarWidget(Widget):
-    """확장 빨간 박스 영역 내 AP·4개 노드·분홍 화살표 신호선·단말 프레임 시각화"""
+    """부모 높이 50% 비율 사이버틱 AP 맵 · 4개 노드 · 분홍 화살표 신호선 · 단말 프레임"""
 
     def __init__(self, **kwargs):
-        super().__init__(size_hint_y=None, height=390, **kwargs)
+        kwargs.setdefault("size_hint_y", 0.5)
+        super().__init__(**kwargs)
         self._ap_name = "측정 불가"
         self._connected = False
         self._nodes = []
@@ -149,10 +150,12 @@ class CyberApRadarWidget(Widget):
         for _ in range(13):
             lbl = make_label(
                 text="",
-                font_size="9.5sp",
+                font_size="10.5sp",
                 color=(0.88, 0.96, 1.0, 1),
                 halign="center",
                 valign="middle",
+                shorten=True,
+                shorten_from="right",
             )
             self._labels.append(lbl)
             self.add_widget(lbl)
@@ -196,105 +199,128 @@ class CyberApRadarWidget(Widget):
                 )
         self._redraw()
 
-    def _place_label(self, idx, x, y, w, h, text, halign="center", color=(0.88, 0.96, 1.0, 1)):
+    def _place_label(self, idx, x, y, w, h, text, halign="center", color=(0.88, 0.96, 1.0, 1), font_size="10.5sp", multiline=False):
         if idx >= len(self._labels):
             return
         lbl = self._labels[idx]
-        lbl.pos = (x, y)
-        lbl.size = (w, h)
-        lbl.text_size = (max(24, w - 4), max(12, h))
+        safe_w = max(32.0, float(w))
+        safe_h = max(16.0, float(h))
+        lbl.pos = (float(x), float(y))
+        lbl.size = (safe_w, safe_h)
+        lbl.font_size = font_size
+        lbl.shorten = not multiline
+        lbl.text_size = (max(28.0, safe_w - 6.0), None if multiline else safe_h)
         lbl.halign = halign
         lbl.valign = "middle"
         lbl.color = color
         lbl.text = text
 
-    def _draw_router_icon(self, cx, cy, active=False):
+    def _draw_router_icon(self, cx, cy, active=False, scale=1.0):
         base_color = (0.0, 0.90, 1.0, 1) if active else (0.35, 0.45, 0.58, 0.9)
-        body_w, body_h = 58, 18
+        body_w, body_h = 68.0 * scale, 22.0 * scale
         bx, by = cx - body_w * 0.5, cy - body_h * 0.5
 
         Color(0.06, 0.11, 0.19, 1)
         Rectangle(pos=(bx, by), size=(body_w, body_h))
         Color(*base_color)
-        Line(rectangle=(bx, by, body_w, body_h), width=1.4)
+        Line(rectangle=(bx, by, body_w, body_h), width=1.6)
 
         for side in (-1, 1):
-            ax = cx + side * 18
-            Line(points=[ax, by + body_h, ax, by + body_h + 12], width=1.5)
-            Ellipse(pos=(ax - 2.5, by + body_h + 11), size=(5, 5))
+            ax = cx + side * (22.0 * scale)
+            ant_h = 15.0 * scale
+            Line(points=[ax, by + body_h, ax, by + body_h + ant_h], width=1.7)
+            Ellipse(pos=(ax - 3.0, by + body_h + ant_h - 1.0), size=(6.0, 6.0))
 
         for k in range(3):
-            lx = bx + 9 + k * 14
+            lx = bx + (11.0 + k * 17.0) * scale
             if active:
                 Color(0.0, 1.0, 0.62, 1)
             else:
                 Color(0.35, 0.42, 0.50, 0.8)
-            Ellipse(pos=(lx, by + 6), size=(5, 5))
+            Ellipse(pos=(lx, by + 7.0 * scale), size=(6.0 * scale, 6.0 * scale))
 
     def _draw_directed_signal_line(self, sx, sy, tx, ty, bars, color):
         dx = tx - sx
         dy = ty - sy
         dist = math.hypot(dx, dy)
-        if dist < 4:
+        if dist < 6.0:
             return
         ux = dx / dist
         uy = dy / dist
         px = -uy
         py = ux
 
-        start_x = sx + ux * 14
-        start_y = sy + uy * 14
-        end_x = tx - ux * 24
-        end_y = ty - uy * 24
+        start_x = sx + ux * 16.0
+        start_y = sy + uy * 16.0
+        end_x = tx - ux * 26.0
+        end_y = ty - uy * 26.0
 
         Color(1.0, 0.35, 0.78, 0.92)
-        Line(points=[start_x, start_y, end_x, end_y], width=1.5)
+        Line(points=[start_x, start_y, end_x, end_y], width=1.6)
 
         active_ticks = max(1, bars)
         for t_idx in range(active_ticks):
             frac = 0.25 + 0.50 * (t_idx / max(1, active_ticks))
             mx = start_x + (end_x - start_x) * frac
             my = start_y + (end_y - start_y) * frac
-            tick_len = 4.5 + t_idx * 1.2
+            tick_len = 5.0 + t_idx * 1.4
             Color(*color)
             Line(
                 points=[mx - px * tick_len, my - py * tick_len, mx + px * tick_len, my + py * tick_len],
-                width=1.2,
+                width=1.3,
             )
 
-        head_len = 8.5
+        head_len = 9.5
         ang = math.atan2(dy, dx)
         Color(1.0, 0.35, 0.78, 0.95)
         for side in (-1, 1):
             hx = end_x - head_len * math.cos(ang + side * 0.42)
             hy = end_y - head_len * math.sin(ang + side * 0.42)
-            Line(points=[end_x, end_y, hx, hy], width=1.5)
+            Line(points=[end_x, end_y, hx, hy], width=1.6)
 
     def _draw_signal_bar_meter(self, x, y, bars, color):
         for b in range(4):
-            bh = 5 + b * 3
-            bx = x + b * 6
+            bh = 6.0 + b * 3.5
+            bx = x + b * 7.0
             if b < bars:
                 Color(*color)
             else:
                 Color(0.20, 0.26, 0.35, 0.7)
-            Rectangle(pos=(bx, y), size=(4, bh))
+            Rectangle(pos=(bx, y), size=(4.5, bh))
 
     def _redraw(self, *args):
         try:
             self.canvas.before.clear()
             w, h = float(self.width), float(self.height)
             x0, y0 = float(self.x), float(self.y)
-            if w <= 60 or h <= 60 or len(self._nodes) < 4:
+            if w <= 80.0 or h <= 80.0 or len(self._nodes) < 4:
                 return
+
+            scale = max(1.0, min(1.35, h / 340.0))
+            node_h = max(50.0, min(64.0, h * 0.145))
+            node_w = max(96.0, min(132.0, w * 0.28))
+            pad_x = 10.0
+            top_node_y = y0 + h - node_h - max(42.0, h * 0.11)
+            bot_node_y = y0 + max(12.0, h * 0.035)
+
+            ap_cx = x0 + w * 0.5
+            ap_cy = y0 + h - 24.0 * scale
+
+            top_clear_y = top_node_y - 8.0
+            bot_clear_y = bot_node_y + node_h + 8.0
+            avail_mid_h = max(96.0, top_clear_y - bot_clear_y)
+            ph_h = min(avail_mid_h * 0.88, max(110.0, h * 0.36))
+            ph_w = min(172.0, max(120.0, w * 0.36))
+            ph_x = x0 + (w - ph_w) * 0.5
+            ph_y = bot_clear_y + (avail_mid_h - ph_h) * 0.5
 
             with self.canvas.before:
                 Color(0.04, 0.06, 0.11, 1)
                 Rectangle(pos=(x0, y0), size=(w, h))
 
                 Color(0.09, 0.16, 0.26, 0.55)
-                step_x = max(28.0, w / 10.0)
-                step_y = max(24.0, h / 8.0)
+                step_x = max(30.0, w / 10.0)
+                step_y = max(26.0, h / 9.0)
                 gx = x0 + step_x
                 while gx < x0 + w:
                     Line(points=[gx, y0, gx, y0 + h], width=0.8)
@@ -304,50 +330,45 @@ class CyberApRadarWidget(Widget):
                     Line(points=[x0, gy, x0 + w, gy], width=0.8)
                     gy += step_y
 
-                # 확장된 빨간 박스 외곽선
                 Color(0.95, 0.20, 0.25, 0.92)
                 Line(rectangle=(x0 + 2, y0 + 2, w - 4, h - 4), width=1.6)
 
-                ap_cx = x0 + w * 0.5
-                ap_cy = y0 + h - 42
-                self._draw_router_icon(ap_cx, ap_cy, active=self._connected)
+                self._draw_router_icon(ap_cx, ap_cy, active=self._connected, scale=scale)
                 self._place_label(
                     0,
-                    ap_cx - 84,
-                    ap_cy - 25,
-                    168,
-                    16,
-                    f"AP: {self._ap_name[:14]}",
+                    ap_cx - 95.0,
+                    ap_cy - 30.0 * scale,
+                    190.0,
+                    20.0,
+                    f"AP: {self._ap_name}",
                     color=(0.35, 0.95, 1.0, 1),
+                    font_size="10.5sp",
                 )
 
-                ph_w = min(148.0, max(108.0, w * 0.34))
-                ph_h = max(116.0, h * 0.30)
-                ph_x = x0 + (w - ph_w) * 0.5
-                ph_y = y0 + (h - ph_h) * 0.45
                 Color(0.0, 1.0, 0.62, 0.85)
-                Line(rectangle=(ph_x, ph_y, ph_w, ph_h), width=1.6)
+                Line(rectangle=(ph_x, ph_y, ph_w, ph_h), width=1.7)
 
-                node_w = min(112.0, max(92.0, w * 0.28))
-                node_h = 46.0
                 node_positions = [
-                    (x0 + 8, y0 + h - 98),
-                    (x0 + w - node_w - 8, y0 + h - 98),
-                    (x0 + 8, y0 + 14),
-                    (x0 + w - node_w - 8, y0 + 14),
+                    (x0 + pad_x, top_node_y),
+                    (x0 + w - node_w - pad_x, top_node_y),
+                    (x0 + pad_x, bot_node_y),
+                    (x0 + w - node_w - pad_x, bot_node_y),
                 ]
                 signal_origins = [
-                    (ap_cx - 14, ap_cy - 10),
-                    (ap_cx + 14, ap_cy - 10),
+                    (ap_cx - 16.0, ap_cy - 12.0 * scale),
+                    (ap_cx + 16.0, ap_cy - 12.0 * scale),
                     (ph_x + ph_w * 0.25, ph_y),
                     (ph_x + ph_w * 0.75, ph_y),
                 ]
                 inner_pts = [
-                    (ph_x + 24, ph_y + ph_h - 20),
-                    (ph_x + ph_w - 24, ph_y + ph_h - 20),
-                    (ph_x + 24, ph_y + 20),
-                    (ph_x + ph_w - 24, ph_y + 20),
+                    (ph_x + 26.0, ph_y + ph_h - 22.0),
+                    (ph_x + ph_w - 26.0, ph_y + ph_h - 22.0),
+                    (ph_x + 26.0, ph_y + 22.0),
+                    (ph_x + ph_w - 26.0, ph_y + 22.0),
                 ]
+
+                left_w = max(70.0, (ph_x - x0) - 10.0)
+                right_w = max(70.0, (x0 + w) - (ph_x + ph_w) - 10.0)
 
                 lbl_cursor = 1
                 for i in range(4):
@@ -361,56 +382,59 @@ class CyberApRadarWidget(Widget):
                     Color(0.08, 0.12, 0.20, 0.96)
                     Rectangle(pos=(nx, ny), size=(node_w, node_h))
                     Color(*node["color"])
-                    Line(rectangle=(nx, ny, node_w, node_h), width=1.3)
+                    Line(rectangle=(nx, ny, node_w, node_h), width=1.35)
 
-                    self._draw_signal_bar_meter(nx + 6, ny + 5, node["bars"], node["color"])
+                    self._draw_signal_bar_meter(nx + 6.0, ny + 6.0, node["bars"], node["color"])
 
-                    # 노드 상단 행에 #번호 SSID 배치해 바 미터와 분리
                     self._place_label(
                         lbl_cursor,
-                        nx + 4,
-                        ny + 22,
-                        node_w - 8,
-                        20,
-                        f"#{node['idx']} {node['ssid'][:10]}",
+                        nx + 5.0,
+                        ny + node_h - 26.0,
+                        node_w - 10.0,
+                        22.0,
+                        f"#{node['idx']} {node['ssid']}",
                         halign="left",
                         color=(0.94, 0.98, 1.0, 1),
+                        font_size="10.5sp",
                     )
                     lbl_cursor += 1
 
                     ix, iy = inner_pts[i]
                     Color(*node["color"])
-                    Line(circle=(ix, iy, 8), width=1.4)
+                    Line(circle=(ix, iy, 9.0), width=1.5)
                     self._place_label(
                         lbl_cursor,
-                        ix - 7,
-                        iy - 7,
-                        14,
-                        14,
+                        ix - 8.0,
+                        iy - 8.0,
+                        16.0,
+                        16.0,
                         str(node["idx"]),
                         color=(0.96, 0.98, 1.0, 1),
+                        font_size="10.5sp",
                     )
                     lbl_cursor += 1
 
-                    # 좌/우 여유 공간에 강도/RSSI/속도 잘림 없이 배치
-                    side_w = max(84.0, (ph_x - x0) - 10.0)
                     if i % 2 == 0:
-                        tag_x = x0 + 6
+                        tag_x = x0 + 5.0
+                        tag_w = left_w
                         tag_align = "left"
                     else:
-                        tag_x = x0 + w - side_w - 6
+                        tag_x = ph_x + ph_w + 5.0
+                        tag_w = right_w
                         tag_align = "right"
-                    tag_y = ph_y + ph_h * 0.55 if i < 2 else ph_y + 6
+                    tag_y = ph_y + ph_h * 0.52 if i < 2 else ph_y + 4.0
 
                     self._place_label(
                         lbl_cursor,
                         tag_x,
                         tag_y,
-                        side_w,
-                        36,
+                        tag_w,
+                        48.0,
                         f"[{node['idx']}] {node['strength_txt']}\n{node['rssi_str']}\n속도:{node['speed']}",
                         halign=tag_align,
                         color=node["color"],
+                        font_size="10sp",
+                        multiline=True,
                     )
                     lbl_cursor += 1
         except Exception:
@@ -440,21 +464,21 @@ class WifiTrackerScreen(BoxLayout):
         self._pos_north_m = 0.0
         self._heading_deg = 0.0
 
-        top_bar = BoxLayout(size_hint_y=None, height=38, spacing=8)
+        top_bar = BoxLayout(size_hint_y=None, height=46, spacing=8)
         self.status_label = make_label(
             text="상태: 스캔 대기중",
-            size_hint_x=0.64,
+            size_hint_x=0.62,
             halign="left",
             valign="middle",
-            font_size="11.5sp",
+            font_size="12.5sp",
             color=(0.35, 0.95, 1.0, 1),
         )
-        self.status_label.bind(size=lambda inst, val: setattr(inst, "text_size", (max(40, val[0] - 4), None)))
+        self.status_label.bind(size=lambda inst, val: setattr(inst, "text_size", (max(50, val[0] - 6), None)))
 
         self.toggle_btn = make_button(
             text="일시정지",
-            size_hint_x=0.36,
-            font_size="11.5sp",
+            size_hint_x=0.38,
+            font_size="12.5sp",
             background_color=(0.08, 0.45, 0.62, 1),
         )
         self.toggle_btn.bind(on_press=self.toggle_scanning)
@@ -466,21 +490,21 @@ class WifiTrackerScreen(BoxLayout):
         self.walk_label = make_label(
             text="이동추정: 걸음 0 | 위치: 측정 불가 | 방향: 측정 불가 | 거리: 측정 불가",
             size_hint_y=None,
-            height=26,
-            font_size="10.5sp",
+            height=32,
+            font_size="11.5sp",
             halign="left",
             valign="middle",
             color=(0.82, 0.92, 1.0, 1),
         )
-        bind_auto_height(self.walk_label, min_height=26, pad_y=6, pad_x=4)
+        bind_auto_height(self.walk_label, min_height=32, pad_y=8, pad_x=6)
         self.add_widget(self.walk_label)
 
-        self.radar_widget = CyberApRadarWidget()
+        self.radar_widget = CyberApRadarWidget(size_hint_y=0.5)
         self.add_widget(self.radar_widget)
 
-        # 하단 초록 패널(노란 박스 쪽으로 배치 및 항목별 일렬 정렬)
         self.green_panel = BoxLayout(
             orientation="vertical",
+            size_hint_y=0.5,
             padding=[10, 8, 10, 8],
             spacing=6,
         )
@@ -510,36 +534,36 @@ class WifiTrackerScreen(BoxLayout):
                 "대역/채널폭: 측정 불가"
             ),
             size_hint_y=None,
-            height=130,
-            font_size="10.5sp",
+            height=150,
+            font_size="11.5sp",
             halign="left",
             valign="top",
             color=(0.88, 0.98, 0.92, 1),
         )
-        bind_auto_height(self.conn_detail_label, min_height=120, pad_y=8, pad_x=4)
+        bind_auto_height(self.conn_detail_label, min_height=140, pad_y=10, pad_x=6)
         self.green_panel.add_widget(self.conn_detail_label)
 
         self.list_header = make_label(
             text="주변 AP 스캔 목록 (상위 10개 - 스캔 대기중)",
             size_hint_y=None,
-            height=26,
-            font_size="11sp",
+            height=30,
+            font_size="12sp",
             halign="left",
             valign="middle",
             color=(0.0, 1.0, 0.62, 1),
         )
-        bind_auto_height(self.list_header, min_height=26, pad_y=6, pad_x=4)
+        bind_auto_height(self.list_header, min_height=30, pad_y=8, pad_x=6)
         self.green_panel.add_widget(self.list_header)
 
         self.ap_list_label = make_label(
             text="스캔 대기중",
             size_hint_y=None,
-            font_size="10.5sp",
+            font_size="11.5sp",
             halign="left",
             valign="top",
             color=(0.90, 0.97, 0.93, 1),
         )
-        bind_auto_height(self.ap_list_label, min_height=80, pad_y=10, pad_x=4)
+        bind_auto_height(self.ap_list_label, min_height=90, pad_y=12, pad_x=6)
 
         scroll = ScrollView()
         scroll.add_widget(self.ap_list_label)
